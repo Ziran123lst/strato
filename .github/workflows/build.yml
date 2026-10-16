@@ -4,6 +4,7 @@ name: Build
 on:
   push: 
     branches: [ master ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -46,3 +47,10 @@ jobs:
           CMAKE_CXX_COMPILER_LAUNCHER: "ccache"
           CCACHE_COMPILERCHECK: "string:${{ env.NDK_VERSION }}" # Use NDK version instead of compiler timestamp
         run: ./gradlew --no-daemon --stacktrace --build-cache --parallel --configure-on-demand assembleMainlineRelease
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: strato-apk
+          path: app/build/outputs/apk/mainline/release/*.apk
+          if-no-files-found: error

@@ -57,7 +57,10 @@ namespace skyline::loader {
 
         romFs = programNca->romFs;
         controlRomFs = std::make_shared<vfs::RomFileSystem>(controlNca->romFs);
-        nacp.emplace(controlRomFs->OpenFile("control.nacp"));
+        auto nacpFile{controlRomFs->OpenFile("control.nacp")};
+        if (!nacpFile)
+            throw exception("Incomplete XCI file: missing control.nacp");
+        nacp.emplace(nacpFile);
     }
 
     void *XciLoader::LoadProcessData(const std::shared_ptr<kernel::type::KProcess> &process, const DeviceState &state) {
@@ -73,7 +76,8 @@ namespace skyline::loader {
 
         auto iconName{fmt::format("icon_{}.dat", language::ToString(language))};
         if (!(icon = controlRomFs->OpenFileUnchecked(iconName, {true, false, false}))) {
-            iconName = fmt::format("icon_{}.dat", language::ToString(nacp->GetFirstSupportedTitleLanguage()));
+            if (nacp)
+                iconName = fmt::format("icon_{}.dat", language::ToString(nacp->GetFirstSupportedTitleLanguage()));
             icon = controlRomFs->OpenFileUnchecked(iconName, {true, false, false});
         }
 

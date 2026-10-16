@@ -67,6 +67,9 @@ jobs:
           RELEASE_TAG="nightly"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$APK_FILE" --clobber
+            gh release edit "$RELEASE_TAG" \
+              --notes "Automated build from commit ${{ github.sha }} (${{ github.run_number }})" \
+              --target "${{ github.ref_name }}"
           else
             gh release create "$RELEASE_TAG" "$APK_FILE" \
               --title "Strato Nightly" \

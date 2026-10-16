@@ -6,6 +6,9 @@ on:
     branches: [ master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -48,9 +51,24 @@ jobs:
           CCACHE_COMPILERCHECK: "string:${{ env.NDK_VERSION }}" # Use NDK version instead of compiler timestamp
         run: ./gradlew --no-daemon --stacktrace --build-cache --parallel --configure-on-demand assembleMainlineRelease
 
-      - name: Upload APK
+      - name: Upload APK to Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: strato-apk
           path: app/build/outputs/apk/mainline/release/*.apk
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          APK_FILE=$(ls app/build/outputs/apk/mainline/release/*.apk | head -n1)
+          RELEASE_TAG="nightly"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$APK_FILE" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$APK_FILE" \
+              --title "Strato Nightly" \
+              --notes "Automated build from commit ${{ github.sha }} (${{ github.run_number }})"
+          fi

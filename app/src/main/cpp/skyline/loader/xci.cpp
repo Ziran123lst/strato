@@ -52,8 +52,14 @@ namespace skyline::loader {
                 else if (nca.contentType == vfs::NcaContentType::Control && nca.romFs != nullptr)
                     controlNca = std::move(nca);
             } catch (const loader_exception &e) {
-                throw loader_exception(e.error);
+                // Eden/yuzu-compatible: an NCA that cannot be decrypted or parsed
+                // (e.g. missing header/title keys) must not invalidate the whole
+                // container. Log it, keep scanning, and let the entry display with
+                // filename fallback metadata.
+                LOGW("XCI: skipping NCA '{}': {}", entry.name, e.what());
+                continue;
             } catch (const std::exception &e) {
+                LOGW("XCI: skipping NCA '{}': {}", entry.name, e.what());
                 continue;
             }
         }
@@ -72,6 +78,8 @@ namespace skyline::loader {
             if (nacpFile)
                 nacp.emplace(nacpFile);
         }
+
+        LOGI("XCI loaded: programNCA={}, controlNCA={}, nacp={}, fileSize={} bytes", programNca.has_value(), controlNca.has_value(), nacp.has_value(), backing->size);
     }
 
     void *XciLoader::LoadProcessData(const std::shared_ptr<kernel::type::KProcess> &process, const DeviceState &state) {

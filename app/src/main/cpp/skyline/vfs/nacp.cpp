@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright © 2020 Skyline Team and Contributors (https://github.com/skyline-emu/)
 
+#include <stdexcept>
+
 #include "nacp.h"
 
 namespace skyline::vfs {
     NACP::NACP(const std::shared_ptr<vfs::Backing> &backing) {
+        if (backing->size < sizeof(NacpData))
+            throw std::runtime_error("NACP file is too small");
+
         nacpContents = backing->Read<NacpData>();
 
         u32 counter{};
@@ -17,6 +22,11 @@ namespace skyline::vfs {
     }
 
     language::ApplicationLanguage NACP::GetFirstSupportedTitleLanguage() {
+        // Guard against all title entries being empty (countr_zero(0) would return 32 and
+        // the resulting titleEntries.at(32) would throw out of bounds)
+        if (supportedTitleLanguages == 0)
+            return language::ApplicationLanguage::AmericanEnglish;
+
         return static_cast<language::ApplicationLanguage>(std::countr_zero(supportedTitleLanguages));
     }
 

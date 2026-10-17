@@ -38,40 +38,21 @@ namespace skyline::loader {
                 else if (nca.contentType == vfs::NcaContentType::Control && nca.romFs != nullptr)
                     controlNca = std::move(nca);
             } catch (const loader_exception &e) {
-                // Eden/yuzu-compatible: an NCA that cannot be decrypted or parsed
-                // (e.g. missing header/title keys) must not invalidate the whole
-                // container. Log it, keep scanning, and let the entry display with
-                // filename fallback metadata.
-                LOGW("NSP: skipping NCA '{}': {}", entry.name, e.what());
-                continue;
+                throw loader_exception(e.error);
             } catch (const std::exception &e) {
-                LOGW("NSP: skipping NCA '{}': {}", entry.name, e.what());
                 continue;
             }
         }
 
-        // Eden/yuzu-compatible graceful degradation: a missing program NCA, control
-        // NCA or control.nacp no longer invalidates the container. The entry will
-        // still be listed (metadata falls back to the file name) and only fails at
-        // launch time when the program data is actually needed.
-        if (programNca) {
-            romFs = programNca->romFs;
-        }
+        if (!programNca || !controlNca)
+            throw exception("Incomplete NSP file");
 
-        if (controlNca && controlNca->romFs) {
-            controlRomFs = std::make_shared<vfs::RomFileSystem>(controlNca->romFs);
-            auto nacpFile{controlRomFs->OpenFile("control.nacp")};
-            if (nacpFile)
-                nacp.emplace(nacpFile);
-        }
-
-        LOGI("NSP loaded: programNCA={}, controlNCA={}, nacp={}, fileSize={} bytes", programNca.has_value(), controlNca.has_value(), nacp.has_value(), backing->size);
+        romFs = programNca->romFs;
+        controlRomFs = std::make_shared<vfs::RomFileSystem>(controlNca->romFs);
+        nacp.emplace(controlRomFs->OpenFile("control.nacp"));
     }
 
     void *NspLoader::LoadProcessData(const std::shared_ptr<kernel::type::KProcess> &process, const DeviceState &state) {
-        if (!programNca || !programNca->exeFs)
-            throw loader_exception(LoaderResult::ParsingError);
-
         process->npdm = vfs::NPDM(programNca->exeFs->OpenFile("main.npdm"));
         return NcaLoader::LoadExeFs(this, programNca->exeFs, process, state);
     }
@@ -84,8 +65,7 @@ namespace skyline::loader {
 
         auto iconName{fmt::format("icon_{}.dat", language::ToString(language))};
         if (!(icon = controlRomFs->OpenFileUnchecked(iconName, {true, false, false}))) {
-            if (nacp)
-                iconName = fmt::format("icon_{}.dat", language::ToString(nacp->GetFirstSupportedTitleLanguage()));
+            iconName = fmt::format("icon_{}.dat", language::ToString(nacp->GetFirstSupportedTitleLanguage()));
             icon = controlRomFs->OpenFileUnchecked(iconName, {true, false, false});
         }
 

@@ -32,14 +32,6 @@ namespace skyline {
              */
             void TraverseDirectory(u32 offset, const std::string &path);
 
-            /**
-             * @brief Traverses the directories within the given directory, adds them to the directory map and calls TraverseFiles on them
-             * @param offset The offset of the directory entry to traverses the directories in
-             * @param path The path to the supplied directory entry
-             * @param depth The current recursion depth, used to guard against cyclic directory references
-             */
-            void TraverseDirectory(u32 offset, const std::string &path, size_t depth);
-
           protected:
             std::shared_ptr<Backing> OpenFileImpl(const std::string &path, Backing::Mode mode) override;
 

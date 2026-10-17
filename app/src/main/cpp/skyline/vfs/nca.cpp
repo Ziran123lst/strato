@@ -49,11 +49,7 @@ namespace skyline::vfs {
         size_t offset{static_cast<size_t>(entry.startOffset) * constant::MediaUnitSize + sectionHeader.sha256HashInfo.pfs0Offset};
         size_t size{constant::MediaUnitSize * static_cast<size_t>(entry.endOffset - entry.startOffset)};
 
-        auto pfsBacking{CreateBacking(sectionHeader, std::make_shared<RegionBacking>(backing, offset, size), offset)};
-        if (!pfsBacking) // Unknown encryption type
-            return;
-
-        auto pfs{std::make_shared<PartitionFileSystem>(pfsBacking)};
+        auto pfs{std::make_shared<PartitionFileSystem>(CreateBacking(sectionHeader, std::make_shared<RegionBacking>(backing, offset, size), offset))};
 
         if (contentType == NcaContentType::Program) {
             // An ExeFS must always contain an NPDM and a main NSO, whereas the logo section will always contain a logo and a startup movie

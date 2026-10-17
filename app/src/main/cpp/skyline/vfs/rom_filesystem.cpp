@@ -22,7 +22,12 @@ namespace skyline::vfs {
 
     void RomFileSystem::TraverseFiles(u32 offset, const std::string &path) {
         RomFsFileEntry entry;
+        size_t iterations{};
         do {
+            // Guard against cyclic/corrupted sibling chains that would loop forever
+            if (++iterations > 0x100000)
+                throw std::runtime_error("RomFs file table traversal exceeded iteration limit");
+
             if (static_cast<u64>(header.fileMetaTableOffset) + offset >= header.dataOffset)
                 throw std::runtime_error("RomFs file table offset out of bounds");
 
@@ -44,8 +49,17 @@ namespace skyline::vfs {
     }
 
     void RomFileSystem::TraverseDirectory(u32 offset, const std::string &path) {
+        TraverseDirectory(offset, path, 0);
+    }
+
+    void RomFileSystem::TraverseDirectory(u32 offset, const std::string &path, size_t depth) {
         RomFsDirectoryEntry entry;
+        size_t iterations{};
         do {
+            // Guard against cyclic/corrupted sibling chains that would loop forever
+            if (++iterations > 0x100000)
+                throw std::runtime_error("RomFs directory table traversal exceeded iteration limit");
+
             if (static_cast<u64>(header.dirMetaTableOffset) + offset >= header.dataOffset)
                 throw std::runtime_error("RomFs directory table offset out of bounds");
 
@@ -66,8 +80,12 @@ namespace skyline::vfs {
             if (entry.fileOffset != constant::RomFsEmptyEntry)
                 TraverseFiles(entry.fileOffset, childPath);
 
-            if (entry.childOffset != constant::RomFsEmptyEntry)
-                TraverseDirectory(entry.childOffset, childPath);
+            if (entry.childOffset != constant::RomFsEmptyEntry) {
+                // Guard against cyclic child references causing unbounded recursion
+                if (depth >= 0x100)
+                    throw std::runtime_error("RomFs directory depth exceeded limit");
+                TraverseDirectory(entry.childOffset, childPath, depth + 1);
+            }
 
             offset = entry.siblingOffset;
         } while (entry.siblingOffset != constant::RomFsEmptyEntry);
@@ -108,11 +126,19 @@ namespace skyline::vfs {
         if (listMode.file) {
             RomFileSystem::RomFsFileEntry romFsFileEntry;
             u32 offset{ownEntry.fileOffset};
+            size_t iterations{};
 
             do {
+                // Guard against cyclic/corrupted sibling chains
+                if (++iterations > 0x100000)
+                    throw std::runtime_error("RomFs directory read exceeded iteration limit");
+
                 romFsFileEntry = backing->Read<RomFileSystem::RomFsFileEntry>(header.fileMetaTableOffset + offset);
 
                 if (romFsFileEntry.nameSize) {
+                    if (romFsFileEntry.nameSize > 0x100000)
+                        throw std::runtime_error("RomFs entry name is too large");
+
                     std::vector<char> name(romFsFileEntry.nameSize);
                     backing->Read(span(name), header.fileMetaTableOffset + offset + sizeof(RomFileSystem::RomFsFileEntry));
 
@@ -126,11 +152,19 @@ namespace skyline::vfs {
         if (listMode.directory) {
             RomFileSystem::RomFsDirectoryEntry romFsDirectoryEntry;
             u32 offset{ownEntry.childOffset};
+            size_t iterations{};
 
             do {
+                // Guard against cyclic/corrupted sibling chains
+                if (++iterations > 0x100000)
+                    throw std::runtime_error("RomFs directory read exceeded iteration limit");
+
                 romFsDirectoryEntry = backing->Read<RomFileSystem::RomFsDirectoryEntry>(header.dirMetaTableOffset + offset);
 
                 if (romFsDirectoryEntry.nameSize) {
+                    if (romFsDirectoryEntry.nameSize > 0x100000)
+                        throw std::runtime_error("RomFs entry name is too large");
+
                     std::vector<char> name(romFsDirectoryEntry.nameSize);
                     backing->Read(span(name), header.dirMetaTableOffset + offset + sizeof(RomFileSystem::RomFsDirectoryEntry));
 

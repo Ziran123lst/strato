@@ -1,21 +1,45 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright © 2020 Skyline Team and Contributors (https://github.com/skyline-emu/)
 
+#include <stdexcept>
+
 #include "region_backing.h"
 #include "rom_filesystem.h"
 
 namespace skyline::vfs {
     RomFileSystem::RomFileSystem(std::shared_ptr<Backing> pBacking) : FileSystem(), backing(std::move(pBacking)) {
+        if (backing->size < sizeof(RomFsHeader))
+            throw std::runtime_error("RomFs backing is too small");
+
         header = backing->Read<RomFsHeader>();
+
+        // Guard against corrupted headers declaring out-of-bounds metadata tables
+        if (header.dataOffset > backing->size)
+            throw std::runtime_error("RomFs data offset is out of bounds");
+        if (header.fileMetaTableOffset > backing->size || header.dirMetaTableOffset > backing->size)
+            throw std::runtime_error("RomFs meta table offset is out of bounds");
+
         TraverseDirectory(0, "");
     }
 
     void RomFileSystem::TraverseFiles(u32 offset, const std::string &path) {
         RomFsFileEntry entry;
+        size_t iterations{};
         do {
+            // Guard against cyclic/corrupted sibling chains that would loop forever
+            if (++iterations > 0x10000)
+                throw std::runtime_error("RomFs file table traversal exceeded iteration limit");
+
+            // Bounds check against the actual meta table size, not dataOffset
+            if (offset >= header.fileMetaTableSize)
+                break;
+
             entry = backing->Read<RomFsFileEntry>(header.fileMetaTableOffset + offset);
 
             if (entry.nameSize) {
+                if (entry.nameSize > 0x1000)
+                    throw std::runtime_error("RomFs entry name is too large");
+
                 std::vector<char> name(entry.nameSize);
                 backing->Read(span(name), header.fileMetaTableOffset + offset + sizeof(RomFsFileEntry));
 
@@ -28,12 +52,28 @@ namespace skyline::vfs {
     }
 
     void RomFileSystem::TraverseDirectory(u32 offset, const std::string &path) {
+        TraverseDirectory(offset, path, 0);
+    }
+
+    void RomFileSystem::TraverseDirectory(u32 offset, const std::string &path, size_t depth) {
         RomFsDirectoryEntry entry;
+        size_t iterations{};
         do {
+            // Guard against cyclic/corrupted sibling chains that would loop forever
+            if (++iterations > 0x10000)
+                throw std::runtime_error("RomFs directory table traversal exceeded iteration limit");
+
+            // Bounds check against the actual meta table size
+            if (offset >= header.dirMetaTableSize)
+                break;
+
             entry = backing->Read<RomFsDirectoryEntry>(header.dirMetaTableOffset + offset);
 
             std::string childPath(path);
             if (entry.nameSize) {
+                if (entry.nameSize > 0x1000)
+                    throw std::runtime_error("RomFs entry name is too large");
+
                 std::vector<char> name(entry.nameSize);
                 backing->Read(span(name), header.dirMetaTableOffset + offset + sizeof(RomFsDirectoryEntry));
                 childPath = path + (path.empty() ? "" : "/") + std::string(name.data(), entry.nameSize);
@@ -41,11 +81,15 @@ namespace skyline::vfs {
 
             directoryMap.emplace(childPath, entry);
 
-            if (entry.fileOffset != constant::RomFsEmptyEntry)
+            // Only recurse if offsets are within valid meta table ranges
+            if (entry.fileOffset != constant::RomFsEmptyEntry && entry.fileOffset < header.fileMetaTableSize)
                 TraverseFiles(entry.fileOffset, childPath);
 
-            if (entry.childOffset != constant::RomFsEmptyEntry)
-                TraverseDirectory(entry.childOffset, childPath);
+            if (entry.childOffset != constant::RomFsEmptyEntry && entry.childOffset < header.dirMetaTableSize) {
+                if (depth >= 0x100)
+                    throw std::runtime_error("RomFs directory depth exceeded limit");
+                TraverseDirectory(entry.childOffset, childPath, depth + 1);
+            }
 
             offset = entry.siblingOffset;
         } while (entry.siblingOffset != constant::RomFsEmptyEntry);
@@ -86,11 +130,21 @@ namespace skyline::vfs {
         if (listMode.file) {
             RomFileSystem::RomFsFileEntry romFsFileEntry;
             u32 offset{ownEntry.fileOffset};
+            size_t iterations{};
 
             do {
+                if (++iterations > 0x10000)
+                    throw std::runtime_error("RomFs directory read exceeded iteration limit");
+
+                if (offset >= header.fileMetaTableSize)
+                    break;
+
                 romFsFileEntry = backing->Read<RomFileSystem::RomFsFileEntry>(header.fileMetaTableOffset + offset);
 
                 if (romFsFileEntry.nameSize) {
+                    if (romFsFileEntry.nameSize > 0x1000)
+                        throw std::runtime_error("RomFs entry name is too large");
+
                     std::vector<char> name(romFsFileEntry.nameSize);
                     backing->Read(span(name), header.fileMetaTableOffset + offset + sizeof(RomFileSystem::RomFsFileEntry));
 
@@ -104,11 +158,21 @@ namespace skyline::vfs {
         if (listMode.directory) {
             RomFileSystem::RomFsDirectoryEntry romFsDirectoryEntry;
             u32 offset{ownEntry.childOffset};
+            size_t iterations{};
 
             do {
+                if (++iterations > 0x10000)
+                    throw std::runtime_error("RomFs directory read exceeded iteration limit");
+
+                if (offset >= header.dirMetaTableSize)
+                    break;
+
                 romFsDirectoryEntry = backing->Read<RomFileSystem::RomFsDirectoryEntry>(header.dirMetaTableOffset + offset);
 
                 if (romFsDirectoryEntry.nameSize) {
+                    if (romFsDirectoryEntry.nameSize > 0x1000)
+                        throw std::runtime_error("RomFs entry name is too large");
+
                     std::vector<char> name(romFsDirectoryEntry.nameSize);
                     backing->Read(span(name), header.dirMetaTableOffset + offset + sizeof(RomFileSystem::RomFsDirectoryEntry));
 

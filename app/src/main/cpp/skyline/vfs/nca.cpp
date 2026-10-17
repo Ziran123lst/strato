@@ -25,7 +25,6 @@ namespace skyline::vfs {
 
             cipher.XtsDecrypt({reinterpret_cast<u8 *>(&header), sizeof(NcaHeader)}, 0, 0x200);
 
-            // Check if decryption was successful
             if (header.magic != util::MakeMagic<u32>("NCA3"))
                 throw loader_exception(LoaderResult::ParsingError);
             encrypted = true;
@@ -49,10 +48,13 @@ namespace skyline::vfs {
         size_t offset{static_cast<size_t>(entry.startOffset) * constant::MediaUnitSize + sectionHeader.sha256HashInfo.pfs0Offset};
         size_t size{constant::MediaUnitSize * static_cast<size_t>(entry.endOffset - entry.startOffset)};
 
-        auto pfs{std::make_shared<PartitionFileSystem>(CreateBacking(sectionHeader, std::make_shared<RegionBacking>(backing, offset, size), offset))};
+        auto pfsBacking{CreateBacking(sectionHeader, std::make_shared<RegionBacking>(backing, offset, size), offset)};
+        if (!pfsBacking)
+            return;
+
+        auto pfs{std::make_shared<PartitionFileSystem>(pfsBacking)};
 
         if (contentType == NcaContentType::Program) {
-            // An ExeFS must always contain an NPDM and a main NSO, whereas the logo section will always contain a logo and a startup movie
             if (pfs->FileExists("main") && pfs->FileExists("main.npdm"))
                 exeFs = std::move(pfs);
             else if (pfs->FileExists("NintendoLogo.png") && pfs->FileExists("StartupMovie.gif"))

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright © 2020 Skyline Team and Contributors (https://github.com/skyline-emu/)
 
+#include <algorithm>
+
 #include "region_backing.h"
 #include "partition_filesystem.h"
 
@@ -16,15 +18,20 @@ namespace skyline::vfs {
             throw exception("Invalid filesystem magic: {}", header.magic);
 
         size_t entrySize{hashed ? sizeof(HashedFileEntry) : sizeof(PartitionFileEntry)};
-        size_t stringTableOffset{sizeof(FsHeader) + (header.numFiles * entrySize)};
+        size_t entryCount{std::min<size_t>(header.numFiles, 0x10000)};
+        size_t stringTableSize{std::min<size_t>(static_cast<size_t>(header.stringTableSize), 0x1000000)};
+        size_t stringTableOffset{sizeof(FsHeader) + (entryCount * entrySize)};
         fileDataOffset = stringTableOffset + header.stringTableSize;
 
-        std::vector<char> stringTable(header.stringTableSize + 1);
-        backing->Read(span(stringTable).first(header.stringTableSize), stringTableOffset);
-        stringTable[header.stringTableSize] = 0;
+        std::vector<char> stringTable(stringTableSize + 1);
+        backing->Read(span(stringTable).first(stringTableSize), stringTableOffset);
+        stringTable[stringTableSize] = 0;
 
-        for (u32 entryOffset{sizeof(FsHeader)}; entryOffset < header.numFiles * entrySize; entryOffset += entrySize) {
+        for (u32 entryOffset{sizeof(FsHeader)}; entryOffset < entryCount * entrySize; entryOffset += entrySize) {
             auto entry{backing->Read<PartitionFileEntry>(entryOffset)};
+
+            if (entry.stringTableOffset >= stringTableSize)
+                continue;
 
             std::string name(&stringTable[entry.stringTableOffset]);
             fileMap.emplace(name, entry);
@@ -48,7 +55,6 @@ namespace skyline::vfs {
     }
 
     std::shared_ptr<Directory> PartitionFileSystem::OpenDirectoryImpl(const std::string &path, Directory::ListMode listMode) {
-        // PFS doesn't have directories
         if (!path.empty())
             return nullptr;
 

@@ -11,6 +11,13 @@ namespace skyline::loader {
     XciLoader::XciLoader(const std::shared_ptr<vfs::Backing> &backing, const std::shared_ptr<crypto::KeyStore> &keyStore) {
         header = backing->Read<GamecardHeader>();
 
+        // Some XCI dumps carry up to 0x1000 bytes of initial data before the gamecard
+        // header (eden/yuzu retry the read at that offset). Retry before giving up.
+        if (header.magic != util::MakeMagic<u32>("HEAD") && backing->size >= 0x1000 + sizeof(GamecardHeader)) {
+            auto offsetBacking{std::make_shared<vfs::RegionBacking>(backing, 0x1000, backing->size - 0x1000)};
+            header = offsetBacking->Read<GamecardHeader>();
+        }
+
         if (header.magic != util::MakeMagic<u32>("HEAD"))
             throw exception("Invalid XCI file");
 
@@ -29,38 +36,51 @@ namespace skyline::loader {
                 logo = entryDir;
         }
 
-        if (secure) {
-            root = secure->OpenDirectory("", {false, true});
-            for (const auto &entry : root->Read()) {
-                if (entry.name.substr(entry.name.find_last_of('.') + 1) != "nca")
-                    continue;
-
-                try {
-                    auto nca{vfs::NCA(secure->OpenFile(entry.name), keyStore, true)};
-
-                    if (nca.contentType == vfs::NcaContentType::Program && nca.romFs != nullptr && nca.exeFs != nullptr)
-                        programNca = std::move(nca);
-                    else if (nca.contentType == vfs::NcaContentType::Control && nca.romFs != nullptr)
-                        controlNca = std::move(nca);
-                } catch (const loader_exception &e) {
-                    throw loader_exception(e.error);
-                } catch (const std::exception &e) {
-                    continue;
-                }
-            }
-        } else {
+        if (!secure)
             throw exception("Corrupted secure partition");
+
+        root = secure->OpenDirectory("", {false, true});
+        for (const auto &entry : root->Read()) {
+            if (entry.name.substr(entry.name.find_last_of('.') + 1) != "nca")
+                continue;
+
+            try {
+                auto nca{vfs::NCA(secure->OpenFile(entry.name), keyStore, true)};
+
+                if (nca.contentType == vfs::NcaContentType::Program && nca.romFs != nullptr && nca.exeFs != nullptr)
+                    programNca = std::move(nca);
+                else if (nca.contentType == vfs::NcaContentType::Control && nca.romFs != nullptr)
+                    controlNca = std::move(nca);
+            } catch (const loader_exception &e) {
+                // Eden/yuzu-compatible: an NCA that cannot be decrypted or parsed
+                // must not invalidate the whole container. Log it, keep scanning.
+                LOGW("XCI: skipping NCA '{}': {}", entry.name, e.what());
+                continue;
+            } catch (const std::exception &e) {
+                LOGW("XCI: skipping NCA '{}': {}", entry.name, e.what());
+                continue;
+            }
         }
 
-        if (!programNca || !controlNca)
-            throw exception("Incomplete XCI file");
+        // Graceful degradation: a missing program/control NCA or control.nacp
+        // no longer invalidates the container. Entry is listed with filename fallback.
+        if (programNca)
+            romFs = programNca->romFs;
 
-        romFs = programNca->romFs;
-        controlRomFs = std::make_shared<vfs::RomFileSystem>(controlNca->romFs);
-        nacp.emplace(controlRomFs->OpenFile("control.nacp"));
+        if (controlNca && controlNca->romFs) {
+            controlRomFs = std::make_shared<vfs::RomFileSystem>(controlNca->romFs);
+            auto nacpFile{controlRomFs->OpenFile("control.nacp")};
+            if (nacpFile)
+                nacp.emplace(nacpFile);
+        }
+
+        LOGI("XCI loaded: programNCA={}, controlNCA={}, nacp={}, fileSize={} bytes", programNca.has_value(), controlNca.has_value(), nacp.has_value(), backing->size);
     }
 
     void *XciLoader::LoadProcessData(const std::shared_ptr<kernel::type::KProcess> &process, const DeviceState &state) {
+        if (!programNca || !programNca->exeFs)
+            throw loader_exception(LoaderResult::ParsingError);
+
         process->npdm = vfs::NPDM(programNca->exeFs->OpenFile("main.npdm"));
         return NcaLoader::LoadExeFs(this, programNca->exeFs, process, state);
     }
@@ -73,7 +93,8 @@ namespace skyline::loader {
 
         auto iconName{fmt::format("icon_{}.dat", language::ToString(language))};
         if (!(icon = controlRomFs->OpenFileUnchecked(iconName, {true, false, false}))) {
-            iconName = fmt::format("icon_{}.dat", language::ToString(nacp->GetFirstSupportedTitleLanguage()));
+            if (nacp)
+                iconName = fmt::format("icon_{}.dat", language::ToString(nacp->GetFirstSupportedTitleLanguage()));
             icon = controlRomFs->OpenFileUnchecked(iconName, {true, false, false});
         }
 

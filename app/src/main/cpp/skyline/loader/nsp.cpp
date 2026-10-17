@@ -38,21 +38,31 @@ namespace skyline::loader {
                 else if (nca.contentType == vfs::NcaContentType::Control && nca.romFs != nullptr)
                     controlNca = std::move(nca);
             } catch (const loader_exception &e) {
-                throw loader_exception(e.error);
+                LOGW("NSP: skipping NCA '{}': {}", entry.name, e.what());
+                continue;
             } catch (const std::exception &e) {
+                LOGW("NSP: skipping NCA '{}': {}", entry.name, e.what());
                 continue;
             }
         }
 
-        if (!programNca || !controlNca)
-            throw exception("Incomplete NSP file");
+        if (programNca)
+            romFs = programNca->romFs;
 
-        romFs = programNca->romFs;
-        controlRomFs = std::make_shared<vfs::RomFileSystem>(controlNca->romFs);
-        nacp.emplace(controlRomFs->OpenFile("control.nacp"));
+        if (controlNca && controlNca->romFs) {
+            controlRomFs = std::make_shared<vfs::RomFileSystem>(controlNca->romFs);
+            auto nacpFile{controlRomFs->OpenFile("control.nacp")};
+            if (nacpFile)
+                nacp.emplace(nacpFile);
+        }
+
+        LOGI("NSP loaded: programNCA={}, controlNCA={}, nacp={}, fileSize={} bytes", programNca.has_value(), controlNca.has_value(), nacp.has_value(), backing->size);
     }
 
     void *NspLoader::LoadProcessData(const std::shared_ptr<kernel::type::KProcess> &process, const DeviceState &state) {
+        if (!programNca || !programNca->exeFs)
+            throw loader_exception(LoaderResult::ParsingError);
+
         process->npdm = vfs::NPDM(programNca->exeFs->OpenFile("main.npdm"));
         return NcaLoader::LoadExeFs(this, programNca->exeFs, process, state);
     }
@@ -65,7 +75,8 @@ namespace skyline::loader {
 
         auto iconName{fmt::format("icon_{}.dat", language::ToString(language))};
         if (!(icon = controlRomFs->OpenFileUnchecked(iconName, {true, false, false}))) {
-            iconName = fmt::format("icon_{}.dat", language::ToString(nacp->GetFirstSupportedTitleLanguage()));
+            if (nacp)
+                iconName = fmt::format("icon_{}.dat", language::ToString(nacp->GetFirstSupportedTitleLanguage()));
             icon = controlRomFs->OpenFileUnchecked(iconName, {true, false, false});
         }
 

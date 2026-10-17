@@ -59,8 +59,10 @@ extern "C" JNIEXPORT jint JNICALL Java_org_stratoemu_strato_loader_RomFile_popul
         LOGW("Signal during ROM parsing: {}", e.what());
         return static_cast<jint>(skyline::loader::LoaderResult::ParsingError);
     } catch (const skyline::loader::loader_exception &e) {
+        LOGW("Loader exception during ROM parsing: {}", e.what());
         return static_cast<jint>(e.error);
     } catch (const std::exception &e) {
+        LOGW("Exception during ROM parsing: {}", e.what());
         return static_cast<jint>(skyline::loader::LoaderResult::ParsingError);
     }
 

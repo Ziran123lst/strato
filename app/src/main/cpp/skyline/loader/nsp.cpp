@@ -44,18 +44,26 @@ namespace skyline::loader {
             }
         }
 
-        if (!programNca || !controlNca)
-            throw exception("Incomplete NSP file");
+        // Eden/yuzu-compatible graceful degradation: a missing program NCA, control
+        // NCA or control.nacp no longer invalidates the container. The entry will
+        // still be listed (metadata falls back to the file name) and only fails at
+        // launch time when the program data is actually needed.
+        if (programNca) {
+            romFs = programNca->romFs;
+        }
 
-        romFs = programNca->romFs;
-        controlRomFs = std::make_shared<vfs::RomFileSystem>(controlNca->romFs);
-        auto nacpFile{controlRomFs->OpenFile("control.nacp")};
-        if (!nacpFile)
-            throw exception("Incomplete NSP file: missing control.nacp");
-        nacp.emplace(nacpFile);
+        if (controlNca && controlNca->romFs) {
+            controlRomFs = std::make_shared<vfs::RomFileSystem>(controlNca->romFs);
+            auto nacpFile{controlRomFs->OpenFile("control.nacp")};
+            if (nacpFile)
+                nacp.emplace(nacpFile);
+        }
     }
 
     void *NspLoader::LoadProcessData(const std::shared_ptr<kernel::type::KProcess> &process, const DeviceState &state) {
+        if (!programNca || !programNca->exeFs)
+            throw loader_exception(LoaderResult::ParsingError);
+
         process->npdm = vfs::NPDM(programNca->exeFs->OpenFile("main.npdm"));
         return NcaLoader::LoadExeFs(this, programNca->exeFs, process, state);
     }

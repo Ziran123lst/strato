@@ -20,10 +20,11 @@ namespace skyline::vfs {
         size_t entrySize{hashed ? sizeof(HashedFileEntry) : sizeof(PartitionFileEntry)};
         // Guard against absurd entry counts in corrupted files
         size_t entryCount{std::min<size_t>(header.numFiles, 0x10000)};
+        // Guard against absurd string table sizes in corrupted files
+        size_t stringTableSize{std::min<size_t>(static_cast<size_t>(header.stringTableSize), 0x1000000)};
         size_t stringTableOffset{sizeof(FsHeader) + (entryCount * entrySize)};
         fileDataOffset = stringTableOffset + header.stringTableSize;
 
-        size_t stringTableSize{static_cast<size_t>(header.stringTableSize)};
         std::vector<char> stringTable(stringTableSize + 1);
         backing->Read(span(stringTable).first(stringTableSize), stringTableOffset);
         stringTable[stringTableSize] = 0;

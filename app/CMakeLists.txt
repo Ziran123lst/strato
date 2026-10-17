@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
 set(source_DIR ${CMAKE_SOURCE_DIR}/src/main/cpp)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-strict-aliasing -Wno-unused-command-line-argument -fwrapv")
-set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -flto=full -fno-stack-protector -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -flto=full -fno-stack-protector -DNDEBUG")
 
 # Build all libraries with -Ofast but with default debug data (-g) for debug and reldebug builds
 set(CMAKE_CXX_FLAGS_DEBUG "-Ofast")
@@ -35,16 +35,15 @@ add_subdirectory("libraries/lz4/build/cmake")
 include_directories(SYSTEM "libraries/lz4/lib")
 
 # Vulkan + Vulkan-Hpp
-add_compile_definitions(VK_USE_PLATFORM_ANDROID_KHR) # We want all the Android-specific structures to be defined
-add_compile_definitions(VULKAN_HPP_NO_SPACESHIP_OPERATOR) # libcxx doesn't implement operator<=> for std::array which breaks this
-add_compile_definitions(VULKAN_HPP_NO_STRUCT_CONSTRUCTORS) # We want to use designated initializers in Vulkan-Hpp
+add_compile_definitions(VK_USE_PLATFORM_ANDROID_KHR)
+add_compile_definitions(VULKAN_HPP_NO_SPACESHIP_OPERATOR)
+add_compile_definitions(VULKAN_HPP_NO_STRUCT_CONSTRUCTORS)
 add_compile_definitions(VULKAN_HPP_NO_SETTERS)
 add_compile_definitions(VULKAN_HPP_NO_SMART_HANDLE)
-
-add_compile_definitions(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1) # We use the dynamic loader rather than the static one to avoid an additional level of indirection
-add_compile_definitions(VULKAN_HPP_ENABLE_DYNAMIC_LOADER_TOOL=0) # We disable the dynamic loader tool so we can supply our own getInstanceProcAddress function from a custom driver
+add_compile_definitions(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1)
+add_compile_definitions(VULKAN_HPP_ENABLE_DYNAMIC_LOADER_TOOL=0)
 include_directories(SYSTEM "libraries/vkhpp")
-include_directories(SYSTEM "libraries/vkhpp/Vulkan-Headers/include") # We use base Vulkan headers from this to ensure version parity with Vulkan-Hpp
+include_directories(SYSTEM "libraries/vkhpp/Vulkan-Headers/include")
 
 # Vulkan Memory Allocator
 include_directories("libraries/vkma/include")
@@ -66,7 +65,7 @@ target_compile_options(mbedcrypto PRIVATE -Wno-everything)
 set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "Install Opus CMake package config module" FORCE)
 include_directories(SYSTEM "libraries/opus/include")
 add_subdirectory("libraries/opus")
-target_compile_definitions(opus PRIVATE OPUS_WILL_BE_SLOW=1) # libopus will warn when built without optimizations
+target_compile_definitions(opus PRIVATE OPUS_WILL_BE_SLOW=1)
 
 # Cubeb
 set(USE_OPENSL ON)
@@ -111,9 +110,9 @@ function(target_link_libraries_system target)
     set(libraries ${ARGN})
     foreach (library ${libraries})
         if (TARGET ${library})
-            get_target_property(library_include_directories ${library} INTERFACE_INCLUDE_DIRECTORIES)
-            if (NOT "${library_include_directories}" STREQUAL "library_include_directories-NOTFOUND")
-                target_include_directories(${target} SYSTEM PRIVATE ${library_include_directories})
+            get_target_property(include_directories ${library} INTERFACE_INCLUDE_DIRECTORIES)
+            if (NOT "${include_directories}" STREQUAL "library_include_directories-NOTFOUND")
+                target_include_directories(${target} SYSTEM PRIVATE ${include_directories})
             endif ()
         endif ()
         target_link_libraries(${target} PRIVATE ${library})
@@ -394,7 +393,6 @@ add_library(skyline SHARED
         ${source_DIR}/skyline/services/ntc/IEnsureNetworkClockAvailabilityService.cpp
         )
 target_include_directories(skyline PRIVATE ${source_DIR}/skyline)
-# target_precompile_headers(skyline PRIVATE ${source_DIR}/skyline/common.h) # PCH will currently break Intellisense
 target_compile_options(skyline PRIVATE -Wall -Wno-unknown-attributes -Wno-c++20-extensions -Wno-c++17-extensions -Wno-c99-designator -Wno-reorder -Wno-missing-braces -Wno-unused-variable -Wno-unused-private-field -Wno-dangling-else -Wconversion -fsigned-bitfields)
 
 target_link_libraries(skyline PRIVATE shader_recompiler audio_core)

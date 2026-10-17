@@ -1,21 +1,37 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright © 2020 Skyline Team and Contributors (https://github.com/skyline-emu/)
 
+#include <stdexcept>
+
 #include "region_backing.h"
 #include "rom_filesystem.h"
 
 namespace skyline::vfs {
     RomFileSystem::RomFileSystem(std::shared_ptr<Backing> pBacking) : FileSystem(), backing(std::move(pBacking)) {
+        if (backing->size < sizeof(RomFsHeader))
+            throw std::runtime_error("RomFs backing is too small");
+
         header = backing->Read<RomFsHeader>();
+
+        // Guard against corrupted headers declaring out-of-bounds metadata tables
+        if (header.dataOffset > backing->size)
+            throw std::runtime_error("RomFs data offset is out of bounds");
+
         TraverseDirectory(0, "");
     }
 
     void RomFileSystem::TraverseFiles(u32 offset, const std::string &path) {
         RomFsFileEntry entry;
         do {
+            if (static_cast<u64>(header.fileMetaTableOffset) + offset >= header.dataOffset)
+                throw std::runtime_error("RomFs file table offset out of bounds");
+
             entry = backing->Read<RomFsFileEntry>(header.fileMetaTableOffset + offset);
 
             if (entry.nameSize) {
+                if (entry.nameSize > 0x100000) // Guard against absurd name sizes in corrupted files
+                    throw std::runtime_error("RomFs entry name is too large");
+
                 std::vector<char> name(entry.nameSize);
                 backing->Read(span(name), header.fileMetaTableOffset + offset + sizeof(RomFsFileEntry));
 
@@ -30,10 +46,16 @@ namespace skyline::vfs {
     void RomFileSystem::TraverseDirectory(u32 offset, const std::string &path) {
         RomFsDirectoryEntry entry;
         do {
+            if (static_cast<u64>(header.dirMetaTableOffset) + offset >= header.dataOffset)
+                throw std::runtime_error("RomFs directory table offset out of bounds");
+
             entry = backing->Read<RomFsDirectoryEntry>(header.dirMetaTableOffset + offset);
 
             std::string childPath(path);
             if (entry.nameSize) {
+                if (entry.nameSize > 0x100000) // Guard against absurd name sizes in corrupted files
+                    throw std::runtime_error("RomFs entry name is too large");
+
                 std::vector<char> name(entry.nameSize);
                 backing->Read(span(name), header.dirMetaTableOffset + offset + sizeof(RomFsDirectoryEntry));
                 childPath = path + (path.empty() ? "" : "/") + std::string(name.data(), entry.nameSize);

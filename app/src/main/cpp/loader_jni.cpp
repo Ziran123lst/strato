@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright © 2020 Skyline Team and Contributors (https://github.com/skyline-emu/)
 
+#include <mutex>
+
 #include "skyline/crypto/key_store.h"
 #include "skyline/vfs/nca.h"
 #include "skyline/vfs/os_backing.h"
@@ -14,6 +16,16 @@
 
 extern "C" JNIEXPORT jint JNICALL Java_org_stratoemu_strato_loader_RomFile_populate(JNIEnv *env, jobject thiz, jint jformat, jint fd, jstring appFilesPathJstring, jint systemLanguage) {
     skyline::signal::ScopedStackBlocker stackBlocker;
+
+    // The signal-to-exception handler is normally only installed by the emulation
+    // entry point (emu_jni.cpp). The ROM scan in MainActivity runs before that,
+    // so any unexpected SIGSEGV/SIGBUS in parsing code would abort the whole
+    // process. Install it here as well so faults surface as catchable
+    // SignalExceptions instead of a crash, and get logged for diagnostics.
+    static std::once_flag signalHandlerOnce;
+    std::call_once(signalHandlerOnce, [] {
+        skyline::signal::SetHostSignalHandler({SIGINT, SIGILL, SIGTRAP, SIGBUS, SIGFPE, SIGSEGV}, skyline::signal::ExceptionalSignalHandler);
+    });
 
     skyline::loader::RomFormat format{static_cast<skyline::loader::RomFormat>(jformat)};
 
@@ -41,6 +53,11 @@ extern "C" JNIEXPORT jint JNICALL Java_org_stratoemu_strato_loader_RomFile_popul
             default:
                 return static_cast<jint>(skyline::loader::LoaderResult::ParsingError);
         }
+    } catch (const skyline::signal::SignalException &e) {
+        // A hardware fault during parsing: log the fault address so it can be
+        // diagnosed from the shared logs, then treat the file as invalid.
+        LOGW("Signal during ROM parsing: {}", e.what());
+        return static_cast<jint>(skyline::loader::LoaderResult::ParsingError);
     } catch (const skyline::loader::loader_exception &e) {
         return static_cast<jint>(e.error);
     } catch (const std::exception &e) {
@@ -70,6 +87,10 @@ extern "C" JNIEXPORT jint JNICALL Java_org_stratoemu_strato_loader_RomFile_popul
             env->SetByteArrayRegion(iconByteArray, 0, static_cast<jsize>(icon.size()), reinterpret_cast<const jbyte *>(icon.data()));
             env->SetObjectField(thiz, rawIconField, iconByteArray);
         }
+    } catch (const skyline::signal::SignalException &e) {
+        // A hardware fault while reading metadata: log it and treat the file as invalid
+        LOGW("Signal during metadata read: {}", e.what());
+        return static_cast<jint>(skyline::loader::LoaderResult::ParsingError);
     } catch (const std::exception &e) {
         // Metadata reads must never let a C++ exception escape across JNI (this aborts the process)
         return static_cast<jint>(skyline::loader::LoaderResult::ParsingError);

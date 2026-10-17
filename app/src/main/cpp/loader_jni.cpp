@@ -54,20 +54,25 @@ extern "C" JNIEXPORT jint JNICALL Java_org_stratoemu_strato_loader_RomFile_popul
     jfieldID rawIconField{env->GetFieldID(clazz, "rawIcon", "[B")};
     jfieldID applicationVersionField{env->GetFieldID(clazz, "applicationVersion", "Ljava/lang/String;")};
 
-    if (loader->nacp) {
-        auto language{skyline::language::GetApplicationLanguage(static_cast<skyline::language::SystemLanguage>(systemLanguage))};
-        if (((1 << static_cast<skyline::u32>(language)) & loader->nacp->supportedTitleLanguages) == 0)
-            language = loader->nacp->GetFirstSupportedTitleLanguage();
+    try {
+        if (loader->nacp) {
+            auto language{skyline::language::GetApplicationLanguage(static_cast<skyline::language::SystemLanguage>(systemLanguage))};
+            if (((1 << static_cast<skyline::u32>(language)) & loader->nacp->supportedTitleLanguages) == 0)
+                language = loader->nacp->GetFirstSupportedTitleLanguage();
 
-        env->SetObjectField(thiz, applicationNameField, env->NewStringUTF(loader->nacp->GetApplicationName(language).c_str()));
-        env->SetObjectField(thiz, applicationVersionField, env->NewStringUTF(loader->nacp->GetApplicationVersion().c_str()));
-        env->SetObjectField(thiz, applicationTitleIdField, env->NewStringUTF(loader->nacp->GetSaveDataOwnerId().c_str()));
-        env->SetObjectField(thiz, applicationAuthorField, env->NewStringUTF(loader->nacp->GetApplicationPublisher(language).c_str()));
+            env->SetObjectField(thiz, applicationNameField, env->NewStringUTF(loader->nacp->GetApplicationName(language).c_str()));
+            env->SetObjectField(thiz, applicationVersionField, env->NewStringUTF(loader->nacp->GetApplicationVersion().c_str()));
+            env->SetObjectField(thiz, applicationTitleIdField, env->NewStringUTF(loader->nacp->GetSaveDataOwnerId().c_str()));
+            env->SetObjectField(thiz, applicationAuthorField, env->NewStringUTF(loader->nacp->GetApplicationPublisher(language).c_str()));
 
-        auto icon{loader->GetIcon(language)};
-        jbyteArray iconByteArray{env->NewByteArray(static_cast<jsize>(icon.size()))};
-        env->SetByteArrayRegion(iconByteArray, 0, static_cast<jsize>(icon.size()), reinterpret_cast<const jbyte *>(icon.data()));
-        env->SetObjectField(thiz, rawIconField, iconByteArray);
+            auto icon{loader->GetIcon(language)};
+            jbyteArray iconByteArray{env->NewByteArray(static_cast<jsize>(icon.size()))};
+            env->SetByteArrayRegion(iconByteArray, 0, static_cast<jsize>(icon.size()), reinterpret_cast<const jbyte *>(icon.data()));
+            env->SetObjectField(thiz, rawIconField, iconByteArray);
+        }
+    } catch (const std::exception &e) {
+        // Metadata reads must never let a C++ exception escape across JNI (this aborts the process)
+        return static_cast<jint>(skyline::loader::LoaderResult::ParsingError);
     }
 
     return static_cast<jint>(skyline::loader::LoaderResult::Success);

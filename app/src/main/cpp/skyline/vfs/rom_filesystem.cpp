@@ -24,11 +24,10 @@ namespace skyline::vfs {
 
     void RomFileSystem::TraverseFiles(u32 offset, const std::string &path) {
         RomFsFileEntry entry;
-        size_t iterations{};
         do {
-            // Guard against cyclic/corrupted sibling chains that would loop forever
-            if (++iterations > 0x10000)
-                throw std::runtime_error("RomFs file table traversal exceeded iteration limit");
+            // Global counter shared across all recursion to bound corrupted-image scans
+            if (++totalIterations > 0x4000)
+                throw std::runtime_error("RomFs traversal exceeded global iteration limit");
 
             // Bounds check against the actual meta table size, not dataOffset
             if (offset >= header.fileMetaTableSize)
@@ -57,13 +56,10 @@ namespace skyline::vfs {
 
     void RomFileSystem::TraverseDirectory(u32 offset, const std::string &path, size_t depth) {
         RomFsDirectoryEntry entry;
-        size_t iterations{};
         do {
-            // Guard against cyclic/corrupted sibling chains that would loop forever
-            if (++iterations > 0x10000)
-                throw std::runtime_error("RomFs directory table traversal exceeded iteration limit");
+            if (++totalIterations > 0x4000)
+                throw std::runtime_error("RomFs traversal exceeded global iteration limit");
 
-            // Bounds check against the actual meta table size
             if (offset >= header.dirMetaTableSize)
                 break;
 
@@ -86,7 +82,7 @@ namespace skyline::vfs {
                 TraverseFiles(entry.fileOffset, childPath);
 
             if (entry.childOffset != constant::RomFsEmptyEntry && entry.childOffset < header.dirMetaTableSize) {
-                if (depth >= 0x100)
+                if (depth >= 0x20)
                     throw std::runtime_error("RomFs directory depth exceeded limit");
                 TraverseDirectory(entry.childOffset, childPath, depth + 1);
             }
@@ -133,7 +129,7 @@ namespace skyline::vfs {
             size_t iterations{};
 
             do {
-                if (++iterations > 0x10000)
+                if (++iterations > 0x1000)
                     throw std::runtime_error("RomFs directory read exceeded iteration limit");
 
                 if (offset >= header.fileMetaTableSize)
@@ -161,7 +157,7 @@ namespace skyline::vfs {
             size_t iterations{};
 
             do {
-                if (++iterations > 0x10000)
+                if (++iterations > 0x1000)
                     throw std::runtime_error("RomFs directory read exceeded iteration limit");
 
                 if (offset >= header.dirMetaTableSize)

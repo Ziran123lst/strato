@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright © 2020 Skyline Team and Contributors (https://github.com/skyline-emu/)
 
+#include <algorithm>
 #include <vfs/os_filesystem.h>
 #include "key_store.h"
 
@@ -17,19 +18,38 @@ namespace skyline::crypto {
         std::vector<char> fileContent(backing->size);
         backing->Read(span(fileContent));
 
+        // Normalize Windows line endings (\r\n -> \n) so hex values don't carry a trailing \r
+        fileContent.erase(std::remove(fileContent.begin(), fileContent.end(), '\r'), fileContent.end());
+
+        auto parseLine = [&](std::vector<char>::iterator start, std::vector<char>::iterator end) {
+            // Skip empty lines and comment lines
+            if (start == end || *start == ';' || *start == '#')
+                return;
+
+            auto keyEnd{std::find(start, end, '=')};
+            if (keyEnd == end)
+                return; // Skip lines without '=' instead of throwing
+
+            std::string_view key(&*start, static_cast<size_t>(keyEnd - start));
+            std::string_view value(&*(keyEnd + 1), static_cast<size_t>(end - keyEnd - 1));
+
+            // Trim surrounding whitespace
+            while (!key.empty() && (key.front() == ' ' || key.front() == '\t')) key.remove_prefix(1);
+            while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.remove_suffix(1);
+
+            if (!key.empty() && !value.empty())
+                (this->*callback)(key, value);
+        };
+
         auto lineStart{fileContent.begin()};
         std::vector<char>::iterator lineEnd;
         while ((lineEnd = std::find(lineStart, fileContent.end(), '\n')) != fileContent.end()) {
-            auto keyEnd{std::find(lineStart, lineEnd, '=')};
-            if (keyEnd == lineEnd)
-                throw exception("Invalid key file");
-
-            std::string_view key(&*lineStart, static_cast<size_t>(keyEnd - lineStart));
-            std::string_view value(&*(keyEnd + 1), static_cast<size_t>(lineEnd - keyEnd - 1));
-            (this->*callback)(key, value);
-
+            parseLine(lineStart, lineEnd);
             lineStart = lineEnd + 1;
         }
+        // Handle last line without trailing newline
+        if (lineStart != fileContent.end())
+            parseLine(lineStart, fileContent.end());
     }
 
     void KeyStore::PopulateTitleKeys(std::string_view keyName, std::string_view value) {

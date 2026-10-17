@@ -82,6 +82,7 @@ namespace skyline {
 
             std::unordered_map<std::string, RomFsFileEntry> fileMap; //!< A map that maps file names to their corresponding entry
             std::unordered_map<std::string, RomFsDirectoryEntry> directoryMap; //!< A map that maps directory names to their corresponding entry
+            size_t totalIterations{}; //!< Global traversal counter shared across all recursion to bound corrupted-image scans
 
             RomFileSystem(std::shared_ptr<Backing> backing);
         };
